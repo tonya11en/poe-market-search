@@ -41,10 +41,6 @@ type PathNode struct {
 	User string
 }
 
-type GraphContext struct {
-	TradePath []PathNode
-}
-
 var (
 	id2Currency = map[int64]string{
 		1:  "alteration",
@@ -96,7 +92,7 @@ var (
 	startingAmount = flag.Int64("amount", 10, "The starting currency amount")
 
 	// This accumulates all of the successful cycles.
-//	pathsToRiches = []GraphContext{TradePath: make([]PathNode, 0, 5)}
+	pathsToRiches = make([][]PathNode, 0, *maxDepthDFS+1)
 )
 
 func parseLine(line string) QueryData {
@@ -170,6 +166,7 @@ func scrapePage(site string, haveCurrency int64, wantCurrency int64, haveAmount 
 			tmp := parseLine(line)
 			// This only works if we have enough currency to use this trade.
 			if tmp.YouPay <= float64(haveAmount) {
+				pageCache[args] = tmp
 				return tmp, true
 			}
 		}
@@ -178,55 +175,55 @@ func scrapePage(site string, haveCurrency int64, wantCurrency int64, haveAmount 
 	return QueryData{}, false
 }
 
-func UpdateContext(context *GraphContext, currencyId int64, queryData QueryData) {
-	lastNode := context.TradePath[len(context.TradePath)-1]
+func UpdateContext(context []PathNode, currencyId int64, queryData QueryData) []PathNode {
+	lastNode := context[len(context)-1]
 	n := PathNode{
 		Id:     currencyId,
 		Amount: int64(float64(lastNode.Amount) / queryData.YouPay * queryData.YouReceive),
 		User:   queryData.Username,
 	}
 	log.Printf("Appending to trade path with %+v", n)
-	context.TradePath = append(context.TradePath, n)
+	return append(context, n)
 }
 
-func PopContext(context *GraphContext) {
-	lastNode := context.TradePath[len(context.TradePath)-1]
+func PopContext(context []PathNode) []PathNode {
+	lastNode := context[len(context)-1]
 	log.Printf("Popping from trade path: %+v", lastNode)
-	if len(context.TradePath) == 0 {
+	if len(context) == 0 {
 		log.Fatal("attempting to pop empty context")
 	}
-	context.TradePath = context.TradePath[:len(context.TradePath)-1]
+	return context[:len(context)-1]
 }
 
 // Perform the DFS. Returns true if we found a valid cycle.
-func Delve(currencyId int64, context *GraphContext) bool {
-	log.Printf("Delving into  currency=%s", id2Currency[currencyId])
-
+func Delve(currencyId int64, context []PathNode) bool {
 	// Have we come back to where we started?
-	if len(context.TradePath) > 0 && context.TradePath[0].Id == currencyId {
-		log.Print("back where we started")
-		log.Printf("@tallen: %+v", context.TradePath)
-		//pathsToRiches = append(pathsToRiches, *context)
+	if len(context) > 0 && context[0].Id == currencyId {
+		log.Print("====== back where we started ======")
+		log.Printf("@tallen: %+v", context)
+		tmp := make([]PathNode, len(context))
+		copy(tmp, context)
+		pathsToRiches = append(pathsToRiches, tmp)
 		return true
 	}
 
 	// Have we delved too deep?
-	if len(context.TradePath) > *maxDepthDFS {
+	if len(context) > *maxDepthDFS {
 		log.Fatal("this is a bug- delved too deep.")
-	} else if len(context.TradePath) == *maxDepthDFS {
+	} else if len(context) == *maxDepthDFS {
 		log.Printf("Hit max depth:")
 		return false
 	}
 
 	// Iterate through all currencies.
 	for tradePartnerCurrencyId, currencyName := range id2Currency {
-		log.Printf("Investigating currency %s", currencyName)
 		if tradePartnerCurrencyId == currencyId {
 			// No reason to exchange currency with itself.
 			continue
 		}
+		log.Printf("Investigating  %s -> %s", id2Currency[currencyId], currencyName)
 
-		if len(context.TradePath) == 0 {
+		if len(context) == 0 {
 			// Populate the starting node.
 			n := PathNode{
 				Id:     currencyId,
@@ -234,11 +231,11 @@ func Delve(currencyId int64, context *GraphContext) bool {
 				User:   "N/A",
 			}
 			log.Printf("Populating starting node: %+v", n)
-			context.TradePath = append(context.TradePath, n)
+			context = append(context, n)
 		}
 
 		// Scrape data to see what trade looks like.
-		lastNode := context.TradePath[len(context.TradePath)-1]
+		lastNode := context[len(context)-1]
 		queryData, valid := scrapePage(website, currencyId, tradePartnerCurrencyId, lastNode.Amount)
 		if !valid {
 			return false
@@ -247,18 +244,18 @@ func Delve(currencyId int64, context *GraphContext) bool {
 		// We've received a valid trade in 'queryData' at this point. If the trade path is empty, we'll
 		// need to add the first hop as a special case, then add the trade in 'queryData'.
 
-		UpdateContext(context, tradePartnerCurrencyId, queryData)
+		context = UpdateContext(context, tradePartnerCurrencyId, queryData)
 		Delve(tradePartnerCurrencyId, context)
-		PopContext(context)
+		context = PopContext(context)
 	}
 
 	return true
 }
 
-func Report(riches []GraphContext) {
+func Report(riches [][]PathNode) {
 	for _, c := range riches {
 		fmt.Println("---------")
-		for n, path := range c.TradePath {
+		for n, path := range c {
 			fmt.Printf("Step %d: %s @ %d\n", n, id2Currency[path.Id], path.Amount)
 		}
 	}
@@ -268,10 +265,10 @@ func main() {
 	for id, currencyName := range id2Currency {
 		if *startingCurrency == currencyName {
 			log.Printf("Starting with currency=%s and amount=%d", currencyName, *startingAmount)
-			c := GraphContext{TradePath: make([]PathNode, 0)}
-			Delve(id, &c)
+			c := make([]PathNode, 0, *maxDepthDFS+1)
+			Delve(id, c)
 			log.Printf("Finished!")
-			//Report(pathsToRiches)
+			Report(pathsToRiches)
 			return
 		}
 	}
