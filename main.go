@@ -238,6 +238,7 @@ func Delve(currencyId int64, context []PathNode) bool {
 		lastNode := context[len(context)-1]
 		queryData, valid := scrapePage(website, currencyId, tradePartnerCurrencyId, lastNode.Amount)
 		if !valid {
+			log.Printf("Scraped invalid or empty page for %s", id2Currency[currencyId])
 			return false
 		}
 
@@ -262,9 +263,10 @@ func Report(riches [][]PathNode) {
 }
 
 func main() {
+	flag.Parse()
 	for id, currencyName := range id2Currency {
 		if *startingCurrency == currencyName {
-			log.Printf("Starting with currency=%s and amount=%d", currencyName, *startingAmount)
+			log.Printf("Starting with currency=%s, amount=%d, dfs_depth=%d", currencyName, *startingAmount, *maxDepthDFS)
 			c := make([]PathNode, 0, *maxDepthDFS+1)
 			Delve(id, c)
 			log.Printf("Finished!")
